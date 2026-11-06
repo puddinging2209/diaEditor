@@ -1,0 +1,33 @@
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+#root {
+	width: 100vw;
+	height: 100dvh;
+	overflow: hidden;
+	overscroll-behavior: none;
+	position: relative;
+}
+
+body {
+	font-feature-settings: "palt";
+	user-select: none;
+}
+
+.chakra-theme {
+	scrollbar-color: var(--chakra-colors-gray-solid) var(--chakra-colors-bg-emphasized);
+	scrollbar-width: thin;
+}
+
+input,
+textarea {
+	user-select: auto;
+}
+
+button,
+input {
+	app-region: no-drag;
+}
