@@ -28,9 +28,9 @@ export const App = () => {
 
 	return (
 		<ConfigProvider>
-			<Grid background='bg.muted' templateRows='3rem calc(100% - 3rem)' width='100dvw' height='100dvh'>
+			<Grid className='app-shell' background='bg.muted' templateRows='3rem calc(100% - 3rem)' width='100dvw' height='100dvh'>
 				<Header></Header>
-				<Grid templateColumns={`${sidebarSize} calc(100% - ${sidebarSize})`} width='full' height='full' transition='grid-template-columns 0.1s'>
+				<Grid className={`app-content-grid${isSidebarOpen ? ' is-sidebar-open' : ''}`} templateColumns={`${sidebarSize} calc(100% - ${sidebarSize})`} width='full' height='full' transition='grid-template-columns 0.1s'>
 					<Sidebar></Sidebar>
 					<Box
 						width='full'

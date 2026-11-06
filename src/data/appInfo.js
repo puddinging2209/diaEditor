@@ -1,8 +1,8 @@
 export const appInfo = {
-	name: 'ReactAppTemplate',
+	name: 'Railway Timetable Studio',
 	id: 'reactapptemplate',
 	version: '0.0.0',
-	description: 'template',
+	description: '架空鉄道のダイヤと車両運用を編集するPWA',
 	author: 'ramune314159265',
 	source: 'https://github.com/ramune314159265/ReactAppTemplate',
 	issues: 'https://github.com/ramune314159265/ReactAppTemplate/issues',

@@ -6,14 +6,15 @@ import { MenuButton } from './MenuButton'
 export const Header = () => {
 	return (
 		<HStack
+			className='app-header'
 			height='full'
 			paddingRight='calc(100% - env(titlebar-area-width, 100%))'
 			justifyContent='space-between'
 			style={{ appRegion: 'drag' }}
 		>
-			<HStack height='full' gap={1}>
+			<HStack className='app-header-brand' height='full' gap={1}>
 				<MenuButton></MenuButton>
-				<HStack height='full' alignItems='center' justifyContent='space-between'>
+				<HStack className='app-header-title' height='full' alignItems='center' justifyContent='space-between'>
 					<HStack alignItems='center' gap={1}>
 						<Icon asChild>
 							<Image src='./icons/128.png' height={6} aspectRatio='1/1' draggable={false}></Image>
@@ -26,7 +27,7 @@ export const Header = () => {
 					</HStack>
 				</HStack>
 			</HStack>
-			<Box width='1/2' zIndex='overlay'>
+			<Box className='app-header-palette' width='1/2' zIndex='overlay'>
 				<CommandPlatte></CommandPlatte>
 			</Box>
 			<Box></Box>

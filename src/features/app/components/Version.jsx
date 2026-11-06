@@ -4,6 +4,7 @@ import { appInfo } from '../../../data/appInfo'
 export const Version = () => {
 	return (
 		<Box
+			className='app-version'
 			position='absolute'
 			right='3'
 			bottom='1'

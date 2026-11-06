@@ -1,11 +1,12 @@
 import { Tooltip } from '@/components/ui/tooltip'
 import { Center, HStack, IconButton, Text } from '@chakra-ui/react'
-import { useAtom, useAtomValue } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { pageIdAtom } from '../states/page'
 import { isSidebarOpenAtom } from '../states/sidebar'
 
 export const SidebarItem = ({ itemData }) => {
 	const isSidebarOpen = useAtomValue(isSidebarOpenAtom)
+	const setIsSidebarOpen = useSetAtom(isSidebarOpenAtom)
 	const [pageId, setPageId] = useAtom(pageIdAtom)
 	const isSelected = (pageId === itemData.id)
 	const IconElement = isSelected ? itemData.iconSelected : itemData.icon
@@ -28,7 +29,10 @@ export const SidebarItem = ({ itemData }) => {
 					color={isSelected ? null : { base: 'fg.muted', _hover: 'fg' }}
 					size='sm'
 					width='full'
-					onClick={() => setPageId(itemData.id)}
+					onClick={() => {
+						setPageId(itemData.id)
+						if (window.matchMedia('(max-width: 700px)').matches) setIsSidebarOpen(false)
+					}}
 				>
 					<HStack
 						width='full'

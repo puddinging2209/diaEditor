@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Railway railwayName="みなと環状鉄道">
+  <Stations>
+    <Station id="depot" name="港車庫" kilopost="0" isDepot="true" depotCapacity="12" />
+    <Station id="bay" name="港町" kilopost="2.4" hasTracks="true" canTurnBack="true" />
+    <Station id="central" name="中央" kilopost="6.8" hasTracks="true" />
+    <Station id="hill" name="丘公園" kilopost="10.2" />
+    <Station id="east" name="東浜" kilopost="14.6" isDepot="true" depotCapacity="8" />
+  </Stations>
+  <Lines>
+    <Line id="harbor" name="港町線" stations="depot,bay,central,hill,east" />
+  </Lines>
+  <Trains>
+    <Train id="local-1001" trainNumber="1001M" type="Local" isDepotOut="true">
+      <Route>
+        <Stop stationId="depot" departureTime="08:00:00" trackNumber="1" />
+        <Stop stationId="bay" arrivalTime="08:08:00" departureTime="08:09:00" trackNumber="2">
+          <OperationEvent type="combine" operationId="02K" />
+        </Stop>
+        <Stop stationId="central" arrivalTime="08:17:00" departureTime="08:18:00" trackNumber="1" />
+        <Stop stationId="hill" arrivalTime="08:26:00" departureTime="08:27:00" trackNumber="1" />
+        <Stop stationId="east" arrivalTime="08:35:00" trackNumber="3">
+          <OperationEvent type="split" operationId="02K" targetTrainId="local-2001" />
+        </Stop>
+      </Route>
+    </Train>
+    <Train id="feeder-02k" trainNumber="回9002M" type="OutofService" isDepotOut="true">
+      <Route>
+        <Stop stationId="depot" departureTime="07:40:00" trackNumber="1" />
+        <Stop stationId="bay" arrivalTime="07:55:00" trackNumber="2" />
+      </Route>
+    </Train>
+    <Train id="local-2001" trainNumber="2001M" type="Local" isDepotIn="true">
+      <Route>
+        <Stop stationId="east" departureTime="08:40:00" trackNumber="3" />
+        <Stop stationId="hill" arrivalTime="08:48:00" departureTime="08:49:00" trackNumber="1" />
+        <Stop stationId="central" arrivalTime="08:57:00" departureTime="08:58:00" trackNumber="1" />
+        <Stop stationId="bay" arrivalTime="09:06:00" departureTime="09:07:00" trackNumber="2" />
+        <Stop stationId="depot" arrivalTime="09:15:00" trackNumber="1" />
+      </Route>
+    </Train>
+  </Trains>
+</Railway>

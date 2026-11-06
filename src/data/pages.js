@@ -21,8 +21,6 @@ export const pages = {
 
 export const sidebarTop = [
 	pages.main,
-	pages.main,
-	pages.main
 ]
 
 export const sidebarBottom = [

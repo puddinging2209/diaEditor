@@ -1,6 +1,3 @@
+import { RailwayEditor } from '../../components/railway/RailwayEditor'
 
-export const MainPage = () => {
-	return (
-		<></>
-	)
-}
+export const MainPage = () => <RailwayEditor />

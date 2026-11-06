@@ -7,10 +7,25 @@ export const generateLicenses = () => ({
 		if (!fs.existsSync('public/licenses/')) {
 			fs.mkdirSync('public/licenses/')
 		}
-		checker.init({ start: './' }, (err, packages) => {
-			fs.writeFileSync('public/licenses/licenses.json', JSON.stringify(packages))
-			Object.values(packages).forEach((p, i) => {
-				fs.copyFileSync(p.licenseFile, `public/licenses/${i}.txt`)
+		return new Promise((resolve, reject) => {
+			checker.init({ start: './' }, (err, packages) => {
+				if (err) {
+					reject(err)
+					return
+				}
+				try {
+					fs.writeFileSync('public/licenses/licenses.json', JSON.stringify(packages))
+					Object.values(packages).forEach((packageInfo, index) => {
+						if (!packageInfo.licenseFile) {
+							console.warn(`No license file found for ${packageInfo.name ?? 'a dependency'}; skipping copy.`)
+							return
+						}
+						fs.copyFileSync(packageInfo.licenseFile, `public/licenses/${index}.txt`)
+					})
+					resolve()
+				} catch (error) {
+					reject(error)
+				}
 			})
 		})
 	}
