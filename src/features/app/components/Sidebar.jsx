@@ -1,7 +1,7 @@
 import { Flex, VStack } from '@chakra-ui/react'
 import { IconButton, Text } from '@chakra-ui/react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { HiOutlineArrowsRightLeft, HiOutlineChartBar, HiOutlineClock, HiOutlineTableCells, HiOutlineMap } from 'react-icons/hi2'
+import { HiOutlineArrowsRightLeft, HiOutlineBuildingOffice2, HiOutlineChartBar, HiOutlineClock, HiOutlineTableCells, HiOutlineMap } from 'react-icons/hi2'
 import { sidebarBottom, sidebarTop } from '../../../data/pages'
 import { navigateRailwayViewAtom, railwayViewAtom } from '../../main/states/railwayView'
 import { SidebarItem } from './SidebarItem'
@@ -17,6 +17,7 @@ export const Sidebar = () => {
 	const views = [
 		{ id: 'diagram', label: 'ダイヤグラム', icon: HiOutlineChartBar },
 		{ id: 'timetable', label: '時刻表', icon: HiOutlineTableCells },
+		{ id: 'station', label: '駅時刻表', icon: HiOutlineBuildingOffice2 },
 		{ id: 'train', label: '列車時刻', icon: HiOutlineClock },
 		{ id: 'operation', label: '車両運用', icon: HiOutlineArrowsRightLeft },
 		{ id: 'manage', label: '駅・種別管理', icon: HiOutlineMap },

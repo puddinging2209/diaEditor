@@ -6,6 +6,10 @@ export interface Station {
   canTurnBack: boolean
   isDepot: boolean
   depotCapacity: number | null
+  networkPosition?: {
+    x: number
+    y: number
+  }
 }
 
 export interface Line {
@@ -41,6 +45,7 @@ export interface TrainRoutePoint {
   departureTime: string | null
   trackNumber: string
   operationEvent: OperationEvent | null
+  isPassing?: boolean
 }
 
 export interface Train {

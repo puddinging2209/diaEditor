@@ -5,6 +5,7 @@ import { isSidebarOpenAtom } from '../app/states/sidebar'
 const viewCommands = [
   { id: 'diagram', name: 'ダイヤグラムを表示', view: 'diagram' },
   { id: 'timetable', name: '時刻表を表示', view: 'timetable' },
+  { id: 'station', name: '駅時刻表を表示', view: 'station' },
   { id: 'train', name: '列車時刻を編集', view: 'train' },
   { id: 'operation', name: '車両運用を表示', view: 'operation' },
   { id: 'manage', name: '駅・種別を管理', view: 'manage' },

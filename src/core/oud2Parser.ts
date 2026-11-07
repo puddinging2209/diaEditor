@@ -106,17 +106,20 @@ function parseOudEkiJikoku(value: string, stations: Station[], trainNumber: stri
   const entries = value.split(',')
   const timedEntries = entries.map((entry) => {
     const [timeData, trackData = ''] = entry.split('$', 2)
-    const [, timePart = ''] = timeData.split(';', 2)
+    const [ekiatsukai, timePart = ''] = timeData.split(';', 2)
     const parsedTimes = timePart
       .split('/')
       .map((time) => parseCompactOudTime(time.trim()))
       .filter((time): time is string => time !== null)
     return {
       times: parsedTimes,
+      isPassing: ekiatsukai === '2',
       trackNumber: trackData.match(/^\s*(\d+)/)?.[1] ?? '',
     }
   })
-  const activeIndices = timedEntries.flatMap((entry, index) => entry.times.length > 0 ? [index] : [])
+  const activeIndices = timedEntries.flatMap((entry, index) =>
+    entry.times.length > 0 || entry.isPassing ? [index] : [],
+  )
   if (activeIndices.length < 2) {
     return null
   }
@@ -135,20 +138,41 @@ function parseOudEkiJikoku(value: string, stations: Station[], trainNumber: stri
     const times = normalizedTimes[routeIndex]
     const isOrigin = stationIndex === activeIndices[0]
     const isDestination = stationIndex === lastActiveIndex
-    const arrivalTime = isOrigin
-      ? null
-      : times[0]
-    const departureTime = isDestination
-      ? null
-      : times.at(-1)!
+    const arrivalTime = times.length === 0 || isOrigin ? null : times[0]
+    const departureTime = times.length === 0 || isDestination ? null : times.at(-1)!
     return {
       stationId: station.id,
       arrivalTime,
       departureTime,
       trackNumber,
       operationEvent: null,
+      isPassing: timedEntries[stationIndex].isPassing,
     }
   })
+}
+
+function splitStationEntriesAtBranchJunctions(stationEntries: Station[]): Station[][] {
+  const paths: Station[][] = []
+  let path: Station[] = []
+  let stationIndices = new Map<string, number>()
+
+  for (const [index, station] of stationEntries.entries()) {
+    const repeatedAt = stationIndices.get(station.id)
+    const closesCircularRoute = index === stationEntries.length - 1 &&
+      station.id === stationEntries[0]?.id
+    if (repeatedAt !== undefined && !closesCircularRoute && index < stationEntries.length - 1) {
+      paths.push(path)
+      path = [station]
+      stationIndices = new Map([[station.id, 0]])
+      continue
+    }
+
+    stationIndices.set(station.id, path.length)
+    path.push(station)
+  }
+
+  if (path.length > 1) paths.push(path)
+  return paths
 }
 
 function parseOuDiaText(text: string): VirtualRailwayData {
@@ -194,11 +218,14 @@ function parseOuDiaText(text: string): VirtualRailwayData {
   if (stationEntries.length < 2) throw new Error('The OuDia file must contain at least two Eki stations.')
 
   const lineName = getProperty(railwaySection, 'Rosenmei') ?? 'Imported Railway'
-  const lines: Line[] = [{
-    id: makeId(lineName, 'line'),
-    name: lineName,
-    stations: stationEntries.map((station) => station.id),
-  }]
+  const lines: Line[] = splitStationEntriesAtBranchJunctions(stationEntries).map((path, index) => {
+    const name = index === 0 ? lineName : `${lineName} (${index + 1})`
+    return {
+      id: makeId(index === 0 ? lineName : `${lineName}-branch-${index + 1}`, 'line'),
+      name,
+      stations: path.map((station) => station.id),
+    }
+  })
   const { trackConnections, serviceRoutes } = deriveNetworkFromLines(lines)
   const sourceTrainTypes = railwaySection.children
     .filter((section) => section.name === 'Ressyasyubetsu')
@@ -342,7 +369,8 @@ function parseOperationEvent(stop: XmlElement): TrainRoutePoint['operationEvent'
 function findStops(trainElement: XmlElement): XmlElement[] {
   return elementsWithin(trainElement).filter((element) =>
     matchesName(element, STOP_TAGS) ||
-    (normalizedName(element.localName || element.tagName).includes('駅') &&
+    ((normalizedName(element.localName || element.tagName).includes('駅') ||
+      readValue(element, ['stopType']) !== null) &&
       readValue(element, ['stationId', 'station', 'stationName', '駅名', '駅ID']) !== null),
   )
 }
@@ -361,12 +389,15 @@ function parseRoutePoint(
   const stationId = stationIdsByName.get(stationName) ?? stationName
   const arrivalTime = parseTime(readValue(stop, ['arrivalTime', 'arrival', 'arrive', '到着', '到着時刻']), context)
   const departureTime = parseTime(readValue(stop, ['departureTime', 'departure', 'depart', '発車', '発時刻']), context)
+  const stopType = readValue(stop, ['stopType'])
   return {
     stationId,
     arrivalTime,
     departureTime,
     trackNumber: readValue(stop, ['trackNumber', 'track', '番線', '着発番線']) ?? '',
     operationEvent: parseOperationEvent(stop),
+    isPassing: stopType === '2' ||
+      readBoolean(readValue(stop, ['isPassing', 'passing', 'pass', '通過']), false),
   }
 }
 

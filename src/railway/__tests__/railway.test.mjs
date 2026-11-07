@@ -5,10 +5,12 @@ import {
   digitsToTime,
   exportRailwayJson,
   generatePatternTrains,
+  hasSharedStationName,
   importRailwayJson,
   mergeImportedRailway,
   OperationAssignmentError,
   validateRailway,
+  validateVirtualRailwayShape,
 } from '../index.ts'
 
 const stations = ['A', 'B', 'C', 'D', 'E'].map((id, index) => ({
@@ -147,6 +149,13 @@ test('merges an imported timetable as a system without replacing existing statio
   assert.deepEqual(merged.trainTypes, ['普通', '快速'])
 })
 
+test('detects shared station names using the same normalization as import merging', () => {
+  const existing = { stations: [{ ...stations[0], name: ' ＡＬＰＨＡ ' }] }
+  assert.equal(hasSharedStationName(existing, { stations: [{ ...stations[1], name: 'alpha' }] }), true)
+  assert.equal(hasSharedStationName(existing, { stations: [{ ...stations[1], name: 'Beta' }] }), false)
+  assert.equal(hasSharedStationName({ stations: [] }, { stations: [{ ...stations[1], name: 'Beta' }] }), false)
+})
+
 test('links a combining operation through a split target train', () => {
   const data = {
     version: '1.0.0',
@@ -231,18 +240,35 @@ test('exports and imports schema-valid JSON and rejects unknown fields', () => {
     lines: [],
     stations,
     trains: [
-      train('named', 'A', 'B', [
+      train('named', 'A', 'C', [
         point('A', null, '08:00:00'),
-        point('B', '08:20:00', null),
+        { ...point('B', '08:10:00', '08:10:00'), isPassing: true },
+        point('C', '08:20:00', null),
       ], { trainName: 'Test Express', typeName: '特急', carCount: 8, serviceRouteId: 'system-main' }),
     ],
     operations: [],
     trainTypes: ['普通', '特急'],
-    trackConnections: [{ id: 'AB', fromStationId: 'A', toStationId: 'B', trackCount: 2 }],
-    serviceRoutes: [{ id: 'system-main', name: 'Main System', stationIds: ['A', 'B'] }],
+    trackConnections: [
+      { id: 'AB', fromStationId: 'A', toStationId: 'B', trackCount: 2 },
+      { id: 'BC', fromStationId: 'B', toStationId: 'C', trackCount: 2 },
+    ],
+    serviceRoutes: [{ id: 'system-main', name: 'Main System', stationIds: ['A', 'B', 'C'] }],
   }
 
   assert.deepEqual(importRailwayJson(exportRailwayJson(data)), data)
+  const optionalTrainFields = { ...data, trains: [train('minimal', 'A', 'B', [
+    point('A', null, '08:00:00'),
+    point('B', '08:20:00', null),
+  ])] }
+  assert.deepEqual(importRailwayJson(exportRailwayJson(optionalTrainFields)), optionalTrainFields)
+  const parsedStyleOptionalFields = {
+    ...optionalTrainFields,
+    trains: [train('parsed', 'A', 'B', [
+      point('A', null, '08:00:00'),
+      point('B', '08:20:00', null),
+    ], { trainName: undefined, typeName: undefined, carCount: undefined, serviceRouteId: undefined })],
+  }
+  assert.deepEqual(validateVirtualRailwayShape(parsedStyleOptionalFields), [])
   const graphOnly = { ...data }
   delete graphOnly.lines
   assert.deepEqual(importRailwayJson(exportRailwayJson(graphOnly)), graphOnly)
@@ -259,6 +285,25 @@ test('exports and imports schema-valid JSON and rejects unknown fields', () => {
     ...data,
     trackConnections: [{ ...data.trackConnections[0], trackCount: 3 }],
   })), /schema/)
+})
+
+test('preserves editable network station positions in JSON and validates their coordinates', () => {
+  const data = {
+    version: '1.0.0',
+    railwayName: 'Network Railway',
+    stations: [{ ...stations[0], networkPosition: { x: 42, y: 120 } }],
+    trains: [],
+    operations: [],
+  }
+  assert.deepEqual(importRailwayJson(exportRailwayJson(data)), data)
+  assert.ok(validateVirtualRailwayShape({
+    ...data,
+    stations: [{ ...data.stations[0], networkPosition: { x: Number.NaN, y: 120 } }],
+  }).some(({ message }) => message.includes('networkPosition.x')))
+  assert.ok(validateVirtualRailwayShape({
+    ...data,
+    stations: [{ ...data.stations[0], networkPosition: { x: 42, z: 120 } }],
+  }).some(({ message }) => message.includes('unexpected "z"')))
 })
 
 test('validates station graph connectivity and service route references', () => {
@@ -299,6 +344,36 @@ test('allows train paths to pass through connected stations omitted as stops', (
   }
 
   assert.ok(!validateRailway(data).some(({ code }) => code === 'train.disconnected-route'))
+})
+
+test('validates passing stations as a single identical arrival and departure time', () => {
+  const data = {
+    version: '1.0.0',
+    railwayName: 'Passing Test',
+    lines: [],
+    stations,
+    trains: [train('pass-train', 'A', 'C', [
+      point('A', null, '08:00:00'),
+      { ...point('B', '08:10:00', '08:10:00'), isPassing: true },
+      point('C', '08:20:00', null),
+    ])],
+    operations: [],
+    trackConnections: [
+      { id: 'AB', fromStationId: 'A', toStationId: 'B', trackCount: 2 },
+      { id: 'BC', fromStationId: 'B', toStationId: 'C', trackCount: 2 },
+    ],
+  }
+  assert.equal(validateRailway(data).some(({ code }) => code === 'train.invalid-passing-time'), false)
+
+  const invalid = {
+    ...data,
+    trains: [train('pass-train', 'A', 'C', [
+      point('A', null, '08:00:00'),
+      { ...point('B', '08:10:00', '08:11:00'), isPassing: true },
+      point('C', '08:20:00', null),
+    ])],
+  }
+  assert.equal(validateRailway(invalid).some(({ code }) => code === 'train.invalid-passing-time'), true)
 })
 
 test('detects conflicts on single-track graph connections without legacy lines', () => {

@@ -4,6 +4,14 @@ function normalizedStationName(name: string): string {
   return name.normalize('NFKC').trim().toLocaleLowerCase()
 }
 
+export function hasSharedStationName(
+  existing: Pick<VirtualRailwayData, 'stations'>,
+  imported: Pick<VirtualRailwayData, 'stations'>,
+): boolean {
+  const existingNames = new Set(existing.stations.map(({ name }) => normalizedStationName(name)))
+  return imported.stations.some(({ name }) => existingNames.has(normalizedStationName(name)))
+}
+
 function uniqueId(baseId: string, usedIds: Set<string>): string {
   if (!usedIds.has(baseId)) {
     usedIds.add(baseId)

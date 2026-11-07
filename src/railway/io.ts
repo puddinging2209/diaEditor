@@ -75,7 +75,13 @@ function validateStation(value: unknown, path: string, issues: ValidationIssue[]
     addIssue(issues, path, 'must be an object.')
     return
   }
-  checkKeys(value, ['id', 'name', 'kilopost', 'hasTracks', 'canTurnBack', 'isDepot', 'depotCapacity'], path, issues)
+  checkKeys(
+    value,
+    ['id', 'name', 'kilopost', 'hasTracks', 'canTurnBack', 'isDepot', 'depotCapacity', 'networkPosition'],
+    path,
+    issues,
+    ['networkPosition'],
+  )
   checkString(value.id, `${path}.id`, issues)
   checkString(value.name, `${path}.name`, issues)
   if (typeof value.kilopost !== 'number' || !Number.isFinite(value.kilopost)) {
@@ -87,6 +93,18 @@ function validateStation(value: unknown, path: string, issues: ValidationIssue[]
   if (value.depotCapacity !== null &&
       (typeof value.depotCapacity !== 'number' || !Number.isFinite(value.depotCapacity) || value.depotCapacity < 0)) {
     addIssue(issues, `${path}.depotCapacity`, 'must be a non-negative number or null.')
+  }
+  if (value.networkPosition !== undefined) {
+    if (!isRecord(value.networkPosition)) {
+      addIssue(issues, `${path}.networkPosition`, 'must be an object.')
+    } else {
+      checkKeys(value.networkPosition, ['x', 'y'], `${path}.networkPosition`, issues)
+      for (const key of ['x', 'y']) {
+        if (typeof value.networkPosition[key] !== 'number' || !Number.isFinite(value.networkPosition[key])) {
+          addIssue(issues, `${path}.networkPosition.${key}`, 'must be a finite number.')
+        }
+      }
+    }
   }
 }
 
@@ -123,12 +141,21 @@ function validateRoutePoint(value: unknown, path: string, issues: ValidationIssu
     addIssue(issues, path, 'must be an object.')
     return
   }
-  checkKeys(value, ['stationId', 'arrivalTime', 'departureTime', 'trackNumber', 'operationEvent'], path, issues)
+  checkKeys(
+    value,
+    ['stationId', 'arrivalTime', 'departureTime', 'trackNumber', 'operationEvent', 'isPassing'],
+    path,
+    issues,
+    ['isPassing'],
+  )
   checkString(value.stationId, `${path}.stationId`, issues)
   checkTime(value.arrivalTime, `${path}.arrivalTime`, issues)
   checkTime(value.departureTime, `${path}.departureTime`, issues)
   checkString(value.trackNumber, `${path}.trackNumber`, issues)
   validateEvent(value.operationEvent, `${path}.operationEvent`, issues)
+  if (value.isPassing !== undefined && typeof value.isPassing !== 'boolean') {
+    addIssue(issues, `${path}.isPassing`, 'must be a boolean when provided.')
+  }
 }
 
 function validateTrain(value: unknown, path: string, issues: ValidationIssue[]) {
@@ -150,20 +177,20 @@ function validateTrain(value: unknown, path: string, issues: ValidationIssue[]) 
     'route',
     'isDepotIn',
     'isDepotOut',
-  ], path, issues, ['serviceRouteId'])
+  ], path, issues, ['trainName', 'typeName', 'carCount', 'serviceRouteId'])
   for (const key of ['id', 'trainNumber', 'originStationId', 'destinationStationId']) {
     checkString(value[key], `${path}.${key}`, issues)
   }
-  if ('trainName' in value && typeof value.trainName !== 'string') {
+  if (value.trainName !== undefined && typeof value.trainName !== 'string') {
     addIssue(issues, `${path}.trainName`, 'must be a string.')
   }
-  if ('typeName' in value && (typeof value.typeName !== 'string' || !value.typeName.trim())) {
+  if (value.typeName !== undefined && (typeof value.typeName !== 'string' || !value.typeName.trim())) {
     addIssue(issues, `${path}.typeName`, 'must be a non-empty string.')
   }
-  if ('serviceRouteId' in value) {
+  if (value.serviceRouteId !== undefined) {
     checkString(value.serviceRouteId, `${path}.serviceRouteId`, issues)
   }
-  if ('carCount' in value &&
+  if (value.carCount !== undefined &&
       (typeof value.carCount !== 'number' || !Number.isInteger(value.carCount) || value.carCount <= 0)) {
     addIssue(issues, `${path}.carCount`, 'must be a positive integer.')
   }

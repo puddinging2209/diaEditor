@@ -73,6 +73,22 @@ test('converts an XML DOM into the railway JSON model', () => {
   assert.deepEqual(data.operations, [])
 })
 
+test('imports XML route points with stopType 2 as passing stations', () => {
+  class PassingStopParser extends MockDOMParser {
+    parseFromString(...args) {
+      const document = super.parseFromString(...args)
+      const betaStop = document.documentElement.querySelectorAll('*')
+        .find((element) => element.localName === 'Stop' && element.getAttribute('stationId') === 'beta')
+      betaStop.attributes.push({ name: 'stopType', localName: 'stopType', value: '2' })
+      return document
+    }
+  }
+
+  const data = parseOud2('<Railway />', new PassingStopParser())
+  assert.equal(data.trains[0].route[1].stationId, 'beta')
+  assert.equal(data.trains[0].route[1].isPassing, true)
+})
+
 test('imports explicit station connections and named service routes from XML', () => {
   class ExplicitNetworkParser extends MockDOMParser {
     parseFromString(...args) {
@@ -167,7 +183,7 @@ EkiJikoku=1;800$1,1;810/811$1,1;820$1
   ])
 })
 
-test('parses real OuDia station entries separated by commas and ignores stop-pattern flags', () => {
+test('parses OuDia station entries with stop flags as regular stops', () => {
   const text = `FileType=OuDia.1.02
 Rosen.
 Rosenmei=Test Line
@@ -202,6 +218,35 @@ EkiJikoku=1;800$1,1;810/811$2,1;820$3
     [data.stations[0].id, null, '08:00:00', '1'],
     [data.stations[1].id, '08:10:00', '08:11:00', '2'],
     [data.stations[2].id, '08:20:00', null, '3'],
+  ])
+})
+
+test('includes untimed OuDia stopType 2 stations in the imported route', () => {
+  const stationSections = Array.from({ length: 32 }, (_, index) =>
+    `Eki.\nEkimei=Station${index + 1}\n.`,
+  ).join('\n')
+  const ekiJikoku = '1;135830$0,1;1400/140030$0,2$-1,1;1402/140230$0,2$-1,1;140345/140415$0,2$-1,1;1406/140630$0,2$-1,1;140845/140915$0,2$-1,1;141130/1418$0,2$-1,2$-1,1;142015/142045$0,1;142145/142215$0,2$-1,1;142345/142415$0,2$-1,2$-1,1;1426/142630$0,1;142730/1428$0,2$-1,2$-1,1;142945/143015$0,1;143130/1432$0,2$-1,2$-1,1;1434/143430$0,2$-1,1;143615/$0,'
+  const text = `FileType=OuDiaSecond.1.15
+Rosen.
+Rosenmei=Passing Test
+${stationSections}
+Dia.
+Kudari.
+Ressya.
+Ressyabangou=4316B
+EkiJikoku=${ekiJikoku}
+.
+.
+.
+.`
+  const data = parseOud2(text)
+  const passingPoints = data.trains[0].route.filter(({ isPassing }) => isPassing)
+  assert.equal(data.trains[0].trainNumber, '4316B')
+  assert.equal(data.trains[0].route.length, 31)
+  assert.equal(passingPoints.length, 15)
+  assert.ok(passingPoints.every(({ arrivalTime, departureTime }) => arrivalTime === null && departureTime === null))
+  assert.deepEqual(passingPoints.map(({ stationId }) => data.stations.findIndex(({ id }) => id === stationId)), [
+    2, 4, 6, 8, 10, 12, 13, 16, 18, 19, 22, 23, 26, 27, 29,
   ])
 })
 
@@ -249,7 +294,7 @@ EkiJikoku=1;800,1;810,1;820,1;830
   assert.equal(data.trains[0].originStationId, data.trains[0].destinationStationId)
 })
 
-test('imports repeated middle stations as shared branch junctions', () => {
+test('splits a repeated station into a main route and a branch', () => {
   const text = `FileType=OuDia.1.02
 Rosen.
 Rosenmei=Branch Line
@@ -257,47 +302,59 @@ Eki.
 Ekimei=Alpha
 .
 Eki.
-Ekimei=Junction
+Ekimei=Bravo
 .
 Eki.
-Ekimei=Beta
+Ekimei=Charlie
 .
 Eki.
-Ekimei=Junction
+Ekimei=Delta
 .
 Eki.
-Ekimei=Gamma
+Ekimei=Bravo
+.
+Eki.
+Ekimei=Echo
+.
+Eki.
+Ekimei=Foxtrot
 .
 Dia.
 Kudari.
 Ressya.
 Ressyabangou=Branch
-EkiJikoku=1;800,1;810,1;820,1;830,1;840
+EkiJikoku=1;800,1;810,1;820,1;830,1;840,1;850,1;900
 .
 .
 .
 .`
 
   const data = parseOud2(text)
-  const alpha = data.stations.find(({ name }) => name === 'Alpha')
-  const junction = data.stations.find(({ name }) => name === 'Junction')
-  const beta = data.stations.find(({ name }) => name === 'Beta')
-  const gamma = data.stations.find(({ name }) => name === 'Gamma')
-  assert.equal(data.stations.length, 4)
-  assert.deepEqual(data.lines[0].stations, [alpha.id, junction.id, beta.id, junction.id, gamma.id])
+  const [alpha, bravo, charlie, delta, echo, foxtrot] = data.stations
+  assert.equal(data.stations.length, 6)
+  assert.deepEqual(data.lines.map(({ stations: stationIds }) => stationIds), [
+    [alpha.id, bravo.id, charlie.id, delta.id],
+    [bravo.id, echo.id, foxtrot.id],
+  ])
+  assert.deepEqual(data.serviceRoutes.map(({ stationIds }) => stationIds), [
+    [alpha.id, bravo.id, charlie.id, delta.id],
+    [bravo.id, echo.id, foxtrot.id],
+  ])
   assert.deepEqual(
     new Set(data.trackConnections.map(({ fromStationId, toStationId }) =>
       [fromStationId, toStationId].sort().join(':'),
     )),
     new Set([
-      [alpha.id, junction.id].sort().join(':'),
-      [junction.id, beta.id].sort().join(':'),
-      [junction.id, gamma.id].sort().join(':'),
+      [alpha.id, bravo.id].sort().join(':'),
+      [bravo.id, charlie.id].sort().join(':'),
+      [charlie.id, delta.id].sort().join(':'),
+      [bravo.id, echo.id].sort().join(':'),
+      [echo.id, foxtrot.id].sort().join(':'),
     ]),
   )
   assert.deepEqual(
     data.trains[0].route.map(({ stationId }) => stationId),
-    [alpha.id, junction.id, beta.id, junction.id, gamma.id],
+    [alpha.id, bravo.id, charlie.id, delta.id, bravo.id, echo.id, foxtrot.id],
   )
 })
 

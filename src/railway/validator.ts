@@ -223,6 +223,16 @@ export function validateRailway(
       if (arrival !== null && departure !== null && departure < arrival) {
         issues.push(issue('train.departure-before-arrival', `Train "${train.id}" departs before arriving.`, [train.id]))
       }
+      if (point.isPassing && (
+        (arrival === null) !== (departure === null) ||
+        (arrival !== null && departure !== null && arrival !== departure)
+      )) {
+        issues.push(issue(
+          'train.invalid-passing-time',
+          `Train "${train.id}" must have one identical arrival/departure time at a passing station.`,
+          [train.id, point.stationId],
+        ))
+      }
       const firstTime = arrival ?? departure
       const lastTime = departure ?? arrival
       if (firstTime !== null && previousTime !== null && firstTime < previousTime) {
