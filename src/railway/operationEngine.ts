@@ -1,4 +1,4 @@
-import { getTrainEndTime, getTrainStartTime, timeToSeconds } from './time.ts'
+import { getTrainEndTime, getTrainStartTime, serviceDaySeconds } from './time.ts'
 import type { Operation, Train, VirtualRailwayData } from './types.ts'
 
 export interface OperationAssignmentOptions {
@@ -72,8 +72,8 @@ export function assignOperations(
     if (!startTime || !endTime) {
       throw new OperationAssignmentError(`Train "${train.id}" must have a start and end time.`)
     }
-    const startSeconds = timeToSeconds(startTime)
-    const endSeconds = timeToSeconds(endTime)
+    const startSeconds = serviceDaySeconds(startTime)
+    const endSeconds = serviceDaySeconds(endTime, startTime)
     if (endSeconds < startSeconds) {
       throw new OperationAssignmentError(`Train "${train.id}" ends before it starts.`)
     }
@@ -116,7 +116,11 @@ export function assignOperations(
           `Operation "${operationId}" exceeds the ${expectedCarCount}-car limit for train "${train.id}".`,
         )
       }
-      uses.push({ trainId: train.id, timeSeconds: timeToSeconds(time), stationId })
+      uses.push({
+        trainId: train.id,
+        timeSeconds: serviceDaySeconds(time, getTrainStartTime(train) ?? undefined),
+        stationId,
+      })
       operation.trainIds.push(train.id)
     }
     if (!train.currentOperationIds.includes(operationId)) {
@@ -145,7 +149,9 @@ export function assignOperations(
       .map((operation) => {
         const lastTrain = trainById.get(operation.trainIds.at(-1)!)
         const lastEndTime = lastTrain ? getTrainEndTime(lastTrain) : null
-        const lastEndSeconds = lastEndTime ? timeToSeconds(lastEndTime) : Number.POSITIVE_INFINITY
+        const lastEndSeconds = lastEndTime
+          ? serviceDaySeconds(lastEndTime, lastTrain ? getTrainStartTime(lastTrain) ?? undefined : undefined)
+          : Number.POSITIVE_INFINITY
         return { operation, lastTrain, lastEndTime, lastEndSeconds }
       })
       .filter(({ lastTrain, lastEndSeconds }) =>
@@ -187,7 +193,13 @@ export function assignOperations(
           .sort((left, right) => right.timeSeconds - left.timeSeconds)[0]
         const lastTrain = priorUse ? trainById.get(priorUse.trainId) : undefined
         const endTime = lastTrain ? getTrainEndTime(lastTrain) : null
-        return { operation, lastTrain, endSeconds: endTime ? timeToSeconds(endTime) : Number.POSITIVE_INFINITY }
+        return {
+          operation,
+          lastTrain,
+          endSeconds: endTime
+            ? serviceDaySeconds(endTime, lastTrain ? getTrainStartTime(lastTrain) ?? undefined : undefined)
+            : Number.POSITIVE_INFINITY,
+        }
       })
       .filter(({ lastTrain, endSeconds }) =>
         lastTrain &&
@@ -208,7 +220,8 @@ export function assignOperations(
     }
     return [{ train, point, event: point.operationEvent, eventTime, routeIndex }]
   })).sort((left, right) =>
-    timeToSeconds(left.eventTime) - timeToSeconds(right.eventTime) ||
+    serviceDaySeconds(left.eventTime, getTrainStartTime(left.train) ?? undefined) -
+      serviceDaySeconds(right.eventTime, getTrainStartTime(right.train) ?? undefined) ||
     left.train.id.localeCompare(right.train.id) ||
     left.routeIndex - right.routeIndex,
   )
@@ -217,13 +230,20 @@ export function assignOperations(
     if (event.type === 'combine') {
       const priorOperation = operationMap.has(event.operationId)
         ? undefined
-        : findPriorOperation(point.stationId, timeToSeconds(eventTime), train.id)
+        : findPriorOperation(
+            point.stationId,
+            serviceDaySeconds(eventTime, getTrainStartTime(train) ?? undefined),
+            train.id,
+          )
       const operation = priorOperation
         ? renameOperation(priorOperation.id, event.operationId)
         : ensureOperation(event.operationId)
       const uses = operationUses.get(event.operationId)!
       const priorUses = uses
-        .filter((use) => use.trainId !== train.id && use.timeSeconds <= timeToSeconds(eventTime))
+        .filter((use) =>
+          use.trainId !== train.id &&
+          use.timeSeconds <= serviceDaySeconds(eventTime, getTrainStartTime(train) ?? undefined),
+        )
         .sort((left, right) => right.timeSeconds - left.timeSeconds)
       const priorUse = priorUses[0]
       if (priorUse) {
@@ -232,7 +252,9 @@ export function assignOperations(
         if (
           priorTrain.destinationStationId !== point.stationId ||
           !priorEndTime ||
-          timeToSeconds(eventTime) - timeToSeconds(priorEndTime) < minimumTurnaroundSeconds
+          serviceDaySeconds(eventTime, getTrainStartTime(train) ?? undefined) -
+            serviceDaySeconds(priorEndTime, getTrainStartTime(priorTrain) ?? undefined) <
+            minimumTurnaroundSeconds
         ) {
           throw new OperationAssignmentError(
             `Operation "${event.operationId}" cannot combine into train "${train.id}" at station "${point.stationId}".`,
@@ -253,7 +275,12 @@ export function assignOperations(
         }
         const targetPoint = targetTrain.route.find((routePoint) => routePoint.stationId === point.stationId)
         const targetTime = targetPoint?.departureTime ?? targetPoint?.arrivalTime
-        if (!targetPoint || !targetTime || timeToSeconds(targetTime) < timeToSeconds(eventTime)) {
+        if (
+          !targetPoint ||
+          !targetTime ||
+          serviceDaySeconds(targetTime, getTrainStartTime(targetTrain) ?? undefined) <
+            serviceDaySeconds(eventTime, getTrainStartTime(train) ?? undefined)
+        ) {
           throw new OperationAssignmentError(
             `Split target train "${targetTrain.id}" must serve station "${point.stationId}" at or after the split.`,
           )

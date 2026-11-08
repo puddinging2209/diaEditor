@@ -9,6 +9,8 @@ import {
   importRailwayJson,
   mergeImportedRailway,
   OperationAssignmentError,
+  serviceDaySeconds,
+  SERVICE_DAY_START_SECONDS,
   validateRailway,
   validateVirtualRailwayShape,
 } from '../index.ts'
@@ -46,7 +48,6 @@ test('assigns consecutive trips and observes the minimum turnaround', () => {
   const data = {
     version: '1.0.0',
     railwayName: 'Test Railway',
-    lines: [],
     stations,
     trains: [
       train('T1', 'A', 'B', [point('A', null, '08:00:00'), point('B', '08:20:00', null)]),
@@ -77,21 +78,46 @@ test('converts six-digit time input into HH:MM:SS', () => {
   assert.throws(() => digitsToTime('1010'), /six digits/)
 })
 
+test('uses 03:00 as the service-day boundary', () => {
+  assert.equal(SERVICE_DAY_START_SECONDS, 3 * 60 * 60)
+  assert.equal(serviceDaySeconds('02:59:59'), 27 * 60 * 60 - 1)
+  assert.equal(serviceDaySeconds('03:00:00'), 3 * 60 * 60)
+  assert.equal(serviceDaySeconds('25:00:00'), 25 * 60 * 60)
+  assert.equal(serviceDaySeconds('03:10:00', '02:50:00'), 27 * 60 * 60 + 10 * 60)
+
+  const assigned = assignOperations({
+    version: '1.0.0',
+    railwayName: 'Overnight Railway',
+    stations,
+    trains: [
+      train('late', 'A', 'B', [point('A', null, '23:30:00'), point('B', '23:50:00', null)]),
+      train('early', 'B', 'C', [point('B', null, '01:00:00'), point('C', '01:20:00', null)]),
+    ],
+    operations: [],
+  })
+  assert.deepEqual(assigned.operations.map(({ trainIds }) => trainIds), [['late', 'early']])
+
+  const crossing = assignOperations({
+    version: '1.0.0',
+    railwayName: 'Boundary Crossing',
+    stations,
+    trains: [train('crossing', 'A', 'B', [
+      point('A', null, '02:50:00'),
+      point('B', '03:10:00', null),
+    ])],
+    operations: [],
+  })
+  assert.deepEqual(crossing.operations.map(({ trainIds }) => trainIds), [['crossing']])
+})
+
 test('merges an imported timetable as a system without replacing existing stations or operations', () => {
   const existing = {
     version: '1.0.0',
     railwayName: 'Existing Railway',
-    lines: [{ id: 'main', name: 'Main', stations: ['A', 'B'] }],
     stations: [
       { ...stations[0], id: 'existing-alpha', name: 'Alpha', kilopost: 42, isDepot: true },
       { ...stations[1], id: 'existing-beta', name: 'Beta' },
     ],
-    trackConnections: [{
-      id: 'existing-connection',
-      fromStationId: 'existing-alpha',
-      toStationId: 'existing-beta',
-      trackCount: 1,
-    }],
     serviceRoutes: [{ id: 'system-main', name: 'Existing Main', stationIds: ['existing-alpha', 'existing-beta'] }],
     trains: [train('T1', 'existing-alpha', 'existing-beta', [
       point('existing-alpha', null, '07:00:00'),
@@ -99,28 +125,27 @@ test('merges an imported timetable as a system without replacing existing statio
     ], { currentOperationIds: ['AUTO-001'] })],
     operations: [{ id: 'AUTO-001', carCount: 6, trainIds: ['T1'] }],
     trainTypes: ['普通'],
+    trainTypeColors: { 普通: '#123456' },
+    trainTypeTextColors: { 普通: '#654321' },
   }
   const imported = {
     version: '1.0.0',
     railwayName: 'Imported Branch',
-    lines: [{ id: 'main', name: 'Imported Branch', stations: ['alpha', 'beta', 'gamma'] }],
     stations: [
       { ...stations[0], id: 'alpha', name: 'Alpha', kilopost: 0 },
       { ...stations[1], id: 'beta', name: 'Beta', kilopost: 1 },
       { ...stations[2], id: 'gamma', name: 'Gamma', kilopost: 2 },
-    ],
-    trackConnections: [
-      { id: 'connection-1', fromStationId: 'alpha', toStationId: 'beta', trackCount: 2 },
-      { id: 'connection-2', fromStationId: 'beta', toStationId: 'gamma', trackCount: 2 },
     ],
     serviceRoutes: [{ id: 'system-main', name: 'Imported Branch', stationIds: ['alpha', 'beta', 'gamma'] }],
     trains: [train('T1', 'alpha', 'gamma', [
       point('alpha', null, '08:00:00'),
       point('beta', '08:10:00', '08:11:00'),
       point('gamma', '08:20:00', null),
-    ], { currentOperationIds: ['AUTO-001'], serviceRouteId: 'system-main' })],
+    ], { trainNumber: 'T2', currentOperationIds: ['AUTO-001'], serviceRouteId: 'system-main' })],
     operations: [{ id: 'AUTO-001', carCount: 4, trainIds: ['T1'] }],
     trainTypes: ['快速'],
+    trainTypeColors: { 普通: '#FFFFFF', 快速: '#ABCDEF' },
+    trainTypeTextColors: { 普通: '#FFFFFF', 快速: '#FEDCBA' },
   }
 
   const merged = mergeImportedRailway(existing, imported)
@@ -129,9 +154,8 @@ test('merges an imported timetable as a system without replacing existing statio
   assert.equal(merged.stations[0].id, 'existing-alpha')
   assert.equal(merged.stations[0].kilopost, 42)
   assert.equal(merged.stations[0].isDepot, true)
-  assert.deepEqual(merged.lines.map(({ id }) => id), ['main', 'main-2'])
-  assert.deepEqual(merged.lines[1].stations, ['existing-alpha', 'existing-beta', 'gamma'])
-  assert.equal(merged.trackConnections.length, 2)
+  assert.equal('lines' in merged, false)
+  assert.equal('trackConnections' in merged, false)
   assert.deepEqual(merged.serviceRoutes[1].stationIds, ['existing-alpha', 'existing-beta', 'gamma'])
   assert.equal(merged.trains[0].id, 'T1')
   assert.equal(merged.trains[1].id, 'T1-2')
@@ -147,6 +171,81 @@ test('merges an imported timetable as a system without replacing existing statio
     ['AUTO-001-2', ['T1-2']],
   ])
   assert.deepEqual(merged.trainTypes, ['普通', '快速'])
+  assert.deepEqual(merged.trainTypeColors, { 普通: '#123456', 快速: '#ABCDEF' })
+  assert.deepEqual(merged.trainTypeTextColors, { 普通: '#654321', 快速: '#FEDCBA' })
+})
+
+test('combines imported trains with the same train number into one chronological train', () => {
+  const existing = {
+    version: '1.0.0',
+    railwayName: 'Existing Railway',
+    stations: [
+      { ...stations[0], id: 'existing-alpha', name: 'Alpha' },
+      { ...stations[1], id: 'existing-beta', name: 'Beta' },
+    ],
+    trains: [train('existing-train', 'existing-alpha', 'existing-beta', [
+      point('existing-alpha', null, '07:00:00'),
+      point('existing-beta', '07:20:00', null),
+    ], { trainNumber: ' １２３ ', currentOperationIds: ['existing-operation'] })],
+    operations: [{ id: 'existing-operation', carCount: 4, trainIds: ['existing-train'] }],
+  }
+  const imported = {
+    version: '1.0.0',
+    railwayName: 'Imported Railway',
+    stations: [
+      { ...stations[0], id: 'alpha', name: 'Alpha' },
+      { ...stations[1], id: 'beta', name: 'Beta' },
+      { ...stations[2], id: 'gamma', name: 'Gamma' },
+      { ...stations[3], id: 'delta', name: 'Delta' },
+      { ...stations[4], id: 'epsilon', name: 'Epsilon' },
+    ],
+    trains: [
+      train('imported-train-late', 'gamma', 'delta', [
+        point('gamma', null, '09:00:00'),
+        point('delta', '09:20:00', null),
+      ], { trainNumber: '123', currentOperationIds: ['imported-operation-late'] }),
+      train('imported-train-disconnected', 'alpha', 'epsilon', [
+        point('alpha', null, '10:00:00'),
+        point('epsilon', '10:20:00', null),
+      ], { trainNumber: '123', currentOperationIds: ['imported-operation-disconnected'] }),
+      train('imported-train-middle', 'beta', 'gamma', [
+        point('beta', null, '08:00:00'),
+        point('gamma', '08:20:00', null),
+      ], { trainNumber: '123', currentOperationIds: ['imported-operation-middle'] }),
+    ],
+    operations: [
+      { id: 'imported-operation-late', carCount: 4, trainIds: ['imported-train-late'] },
+      { id: 'imported-operation-disconnected', carCount: 4, trainIds: ['imported-train-disconnected'] },
+      { id: 'imported-operation-middle', carCount: 4, trainIds: ['imported-train-middle'] },
+    ],
+  }
+
+  const merged = mergeImportedRailway(existing, imported)
+
+  assert.equal(merged.trains.length, 2)
+  const combinedTrain = merged.trains.find(({ id }) => id === 'existing-train')
+  const disconnectedTrain = merged.trains.find(({ id }) => id !== 'existing-train')
+  assert.deepEqual(combinedTrain.route.map(({ stationId }) => stationId), [
+    'existing-alpha',
+    'existing-beta',
+    'gamma',
+    'delta',
+  ])
+  assert.deepEqual(combinedTrain.currentOperationIds, [
+    'existing-operation',
+    'imported-operation-middle',
+    'imported-operation-late',
+  ])
+  assert.deepEqual(disconnectedTrain.route.map(({ stationId }) => stationId), [
+    'existing-alpha',
+    'epsilon',
+  ])
+  assert.deepEqual(merged.operations.map(({ trainIds }) => trainIds), [
+    ['existing-train'],
+    ['existing-train'],
+    [disconnectedTrain.id],
+    ['existing-train'],
+  ])
 })
 
 test('detects shared station names using the same normalization as import merging', () => {
@@ -160,7 +259,6 @@ test('links a combining operation through a split target train', () => {
   const data = {
     version: '1.0.0',
     railwayName: 'Test Railway',
-    lines: [],
     stations,
     trains: [
       train('feeder', 'A', 'B', [point('A', null, '08:00:00'), point('B', '08:30:00', null)]),
@@ -195,7 +293,6 @@ test('rejects a split target that does not serve the split station', () => {
   const data = {
     version: '1.0.0',
     railwayName: 'Test Railway',
-    lines: [],
     stations,
     trains: [
       train('source', 'A', 'B', [
@@ -237,7 +334,6 @@ test('exports and imports schema-valid JSON and rejects unknown fields', () => {
   const data = {
     version: '1.0.0',
     railwayName: 'Test Railway',
-    lines: [],
     stations,
     trains: [
       train('named', 'A', 'C', [
@@ -248,10 +344,8 @@ test('exports and imports schema-valid JSON and rejects unknown fields', () => {
     ],
     operations: [],
     trainTypes: ['普通', '特急'],
-    trackConnections: [
-      { id: 'AB', fromStationId: 'A', toStationId: 'B', trackCount: 2 },
-      { id: 'BC', fromStationId: 'B', toStationId: 'C', trackCount: 2 },
-    ],
+    trainTypeColors: { 特急: '#123456' },
+    trainTypeTextColors: { 特急: '#654321' },
     serviceRoutes: [{ id: 'system-main', name: 'Main System', stationIds: ['A', 'B', 'C'] }],
   }
 
@@ -269,9 +363,29 @@ test('exports and imports schema-valid JSON and rejects unknown fields', () => {
     ], { trainName: undefined, typeName: undefined, carCount: undefined, serviceRouteId: undefined })],
   }
   assert.deepEqual(validateVirtualRailwayShape(parsedStyleOptionalFields), [])
-  const graphOnly = { ...data }
-  delete graphOnly.lines
-  assert.deepEqual(importRailwayJson(exportRailwayJson(graphOnly)), graphOnly)
+  const legacyData = {
+    ...data,
+    lines: [{ id: 'legacy-main', name: 'Legacy Main', stations: ['A', 'B', 'C'] }],
+    trackConnections: [{ malformed: 'ignored' }],
+    stations: data.stations.map((station, index) => ({
+      ...station,
+      ...(index === 0 ? { networkPosition: { x: 42, y: 120 } } : {}),
+    })),
+  }
+  delete legacyData.serviceRoutes
+  const upgraded = importRailwayJson(exportRailwayJson(legacyData))
+  const importedLegacy = importRailwayJson(JSON.stringify(legacyData))
+  assert.equal('lines' in importedLegacy, false)
+  assert.equal('trackConnections' in importedLegacy, false)
+  assert.equal('networkPosition' in importedLegacy.stations[0], false)
+  assert.equal('lines' in upgraded, false)
+  assert.equal('trackConnections' in upgraded, false)
+  assert.equal('networkPosition' in upgraded.stations[0], false)
+  assert.deepEqual(upgraded.serviceRoutes, [{
+    id: 'system-legacy-main',
+    name: 'Legacy Main',
+    stationIds: ['A', 'B', 'C'],
+  }])
   assert.throws(() => importRailwayJson(JSON.stringify({ ...data, extra: true })), /schema/)
   assert.throws(() => importRailwayJson(JSON.stringify({
     ...data,
@@ -283,74 +397,43 @@ test('exports and imports schema-valid JSON and rejects unknown fields', () => {
   })), /schema/)
   assert.throws(() => importRailwayJson(JSON.stringify({
     ...data,
-    trackConnections: [{ ...data.trackConnections[0], trackCount: 3 }],
+    trainTypeColors: { 特急: 'red' },
   })), /schema/)
 })
 
-test('preserves editable network station positions in JSON and validates their coordinates', () => {
+test('does not retain legacy station network positions in JSON', () => {
   const data = {
     version: '1.0.0',
-    railwayName: 'Network Railway',
+    railwayName: 'Station Railway',
     stations: [{ ...stations[0], networkPosition: { x: 42, y: 120 } }],
     trains: [],
     operations: [],
   }
-  assert.deepEqual(importRailwayJson(exportRailwayJson(data)), data)
-  assert.ok(validateVirtualRailwayShape({
-    ...data,
-    stations: [{ ...data.stations[0], networkPosition: { x: Number.NaN, y: 120 } }],
-  }).some(({ message }) => message.includes('networkPosition.x')))
-  assert.ok(validateVirtualRailwayShape({
-    ...data,
-    stations: [{ ...data.stations[0], networkPosition: { x: 42, z: 120 } }],
-  }).some(({ message }) => message.includes('unexpected "z"')))
+  const imported = importRailwayJson(exportRailwayJson(data))
+  assert.equal('networkPosition' in imported.stations[0], false)
 })
 
-test('validates station graph connectivity and service route references', () => {
+test('validates operating system references without requiring station connections', () => {
   const data = {
     version: '1.0.0',
-    railwayName: 'Network Railway',
-    lines: [],
+    railwayName: 'Service Route Railway',
     stations,
     trains: [train('T1', 'A', 'C', [
       point('A', null, '08:00:00'),
       point('C', '08:20:00', null),
-    ], { serviceRouteId: 'missing' })],
+    ], { serviceRouteId: 'A-C' })],
     operations: [],
-    trackConnections: [{ id: 'AB', fromStationId: 'A', toStationId: 'B', trackCount: 1 }],
     serviceRoutes: [{ id: 'A-C', name: 'A to C', stationIds: ['A', 'C'] }],
   }
 
   const codes = validateRailway(data).map(({ code }) => code)
-  assert.ok(codes.includes('network.disconnected-service-route'))
-  assert.ok(codes.includes('train.unknown-service-route'))
-})
-
-test('allows train paths to pass through connected stations omitted as stops', () => {
-  const data = {
-    version: '1.0.0',
-    railwayName: 'Network Railway',
-    stations,
-    trains: [train('T1', 'A', 'C', [
-      point('A', null, '08:00:00'),
-      point('C', '08:20:00', null),
-    ])],
-    operations: [],
-    trackConnections: [
-      { id: 'AB', fromStationId: 'A', toStationId: 'B', trackCount: 2 },
-      { id: 'BC', fromStationId: 'B', toStationId: 'C', trackCount: 2 },
-    ],
-    serviceRoutes: [],
-  }
-
-  assert.ok(!validateRailway(data).some(({ code }) => code === 'train.disconnected-route'))
+  assert.deepEqual(codes, [])
 })
 
 test('validates passing stations as a single identical arrival and departure time', () => {
   const data = {
     version: '1.0.0',
     railwayName: 'Passing Test',
-    lines: [],
     stations,
     trains: [train('pass-train', 'A', 'C', [
       point('A', null, '08:00:00'),
@@ -358,10 +441,6 @@ test('validates passing stations as a single identical arrival and departure tim
       point('C', '08:20:00', null),
     ])],
     operations: [],
-    trackConnections: [
-      { id: 'AB', fromStationId: 'A', toStationId: 'B', trackCount: 2 },
-      { id: 'BC', fromStationId: 'B', toStationId: 'C', trackCount: 2 },
-    ],
   }
   assert.equal(validateRailway(data).some(({ code }) => code === 'train.invalid-passing-time'), false)
 
@@ -376,35 +455,10 @@ test('validates passing stations as a single identical arrival and departure tim
   assert.equal(validateRailway(invalid).some(({ code }) => code === 'train.invalid-passing-time'), true)
 })
 
-test('detects conflicts on single-track graph connections without legacy lines', () => {
-  const data = {
-    version: '1.0.0',
-    railwayName: 'Single Track Railway',
-    stations,
-    lines: [],
-    trains: [
-      train('T1', 'A', 'B', [
-        point('A', null, '08:00:00'),
-        point('B', '08:10:00', null),
-      ]),
-      train('T2', 'B', 'A', [
-        point('B', null, '08:05:00'),
-        point('A', '08:15:00', null),
-      ]),
-    ],
-    operations: [],
-    trackConnections: [{ id: 'AB', fromStationId: 'A', toStationId: 'B', trackCount: 1 }],
-    serviceRoutes: [],
-  }
-
-  assert.ok(validateRailway(data).some(({ code }) => code === 'single-track.conflict'))
-})
-
-test('reports single-track, platform, car-count, and teleportation conflicts', () => {
+test('reports platform, car-count, and teleportation conflicts', () => {
   const data = {
     version: '1.0.0',
     railwayName: 'Test Railway',
-    lines: [{ id: 'L1', name: 'Line 1', stations: ['A', 'B'] }],
     stations,
     trains: [
       train('T1', 'A', 'B', [
@@ -424,11 +478,9 @@ test('reports single-track, platform, car-count, and teleportation conflicts', (
   }
 
   const codes = validateRailway(data, {
-    singleTrackLineIds: ['L1'],
     expectedCarCounts: { T1: 2 },
   }).map((item) => item.code)
 
-  assert.ok(codes.includes('single-track.conflict'))
   assert.ok(codes.includes('track.conflict'))
   assert.ok(codes.includes('operation.car-count-mismatch'))
   assert.ok(codes.includes('operation.teleportation'))

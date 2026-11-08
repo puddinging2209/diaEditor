@@ -1,9 +1,7 @@
 import { getTrainEndTime, getTrainStartTime, timeToSeconds } from './time.ts'
-import { deriveNetworkFromLines } from '../core/network.ts'
 import type { Train, ValidationIssue, VirtualRailwayData } from './types.ts'
 
 export interface RailwayValidationOptions {
-  singleTrackLineIds?: string[]
   expectedCarCounts?: Record<string, number>
 }
 
@@ -32,57 +30,19 @@ function hasOverlappingIntervals(
   return first.start <= second.end && second.start <= first.end
 }
 
-function hasNetworkPath(
-  fromStationId: string,
-  toStationId: string,
-  adjacency: Map<string, Set<string>>,
-): boolean {
-  const pending = [fromStationId]
-  const visited = new Set(pending)
-  while (pending.length) {
-    const stationId = pending.pop()!
-    if (stationId === toStationId) return true
-    for (const neighbor of adjacency.get(stationId) ?? []) {
-      if (visited.has(neighbor)) continue
-      visited.add(neighbor)
-      pending.push(neighbor)
-    }
-  }
-  return false
-}
-
 export function validateRailway(
   data: VirtualRailwayData,
   options: RailwayValidationOptions = {},
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = []
   const stationIds = new Set(data.stations.map((station) => station.id))
-  const lineIds = new Set((data.lines ?? []).map((line) => line.id))
   const trainById = new Map(data.trains.map((train) => [train.id, train]))
   const operationById = new Map(data.operations.map((operation) => [operation.id, operation]))
-  const legacyNetwork = deriveNetworkFromLines(data.lines ?? [])
-  const trackConnections = data.trackConnections ?? legacyNetwork.trackConnections
-  const serviceRoutes = data.serviceRoutes ?? legacyNetwork.serviceRoutes
+  const serviceRoutes = data.serviceRoutes ?? []
   const serviceRouteById = new Map(serviceRoutes.map((route) => [route.id, route]))
-  const connectedPairs = new Set(trackConnections.map(({ fromStationId, toStationId }) =>
-    [fromStationId, toStationId].sort().join('\u0000'),
-  ))
-  const adjacency = new Map<string, Set<string>>()
-  for (const { fromStationId, toStationId } of trackConnections) {
-    const fromNeighbors = adjacency.get(fromStationId) ?? new Set<string>()
-    const toNeighbors = adjacency.get(toStationId) ?? new Set<string>()
-    fromNeighbors.add(toStationId)
-    toNeighbors.add(fromStationId)
-    adjacency.set(fromStationId, fromNeighbors)
-    adjacency.set(toStationId, toNeighbors)
-  }
-  const declaredNetwork = data.trackConnections !== undefined || (data.lines?.length ?? 0) > 0
 
   if (stationIds.size !== data.stations.length) {
     issues.push(issue('station.duplicate-id', 'Station IDs must be unique.', []))
-  }
-  if (lineIds.size !== (data.lines ?? []).length) {
-    issues.push(issue('line.duplicate-id', 'Line IDs must be unique.', []))
   }
   if (trainById.size !== data.trains.length) {
     issues.push(issue('train.duplicate-id', 'Train IDs must be unique.', []))
@@ -91,43 +51,12 @@ export function validateRailway(
     issues.push(issue('operation.duplicate-id', 'Operation IDs must be unique.', []))
   }
 
-  for (const line of data.lines ?? []) {
-    for (const stationId of line.stations) {
-      if (!stationIds.has(stationId)) {
-        issues.push(issue(
-          'line.unknown-station',
-          `Line "${line.id}" references unknown station "${stationId}".`,
-          [line.id, stationId],
-        ))
-      }
-    }
-  }
-
-  if (trackConnections.length !== new Set(trackConnections.map(({ id }) => id)).size) {
-    issues.push(issue('network.duplicate-connection-id', 'Track connection IDs must be unique.', []))
-  }
-  if (connectedPairs.size !== trackConnections.length) {
-    issues.push(issue('network.duplicate-connection', 'A station pair may have only one track connection.', []))
-  }
-  for (const connection of trackConnections) {
-    if (!stationIds.has(connection.fromStationId) || !stationIds.has(connection.toStationId)) {
-      issues.push(issue(
-        'network.unknown-connection-station',
-        `Track connection "${connection.id}" references an unknown station.`,
-        [connection.id],
-      ))
-    }
-    if (connection.fromStationId === connection.toStationId) {
-      issues.push(issue('network.self-connection', `Track connection "${connection.id}" links a station to itself.`, [connection.id]))
-    }
-  }
-
   if (serviceRouteById.size !== serviceRoutes.length) {
-    issues.push(issue('network.duplicate-service-route-id', 'Service route IDs must be unique.', []))
+    issues.push(issue('service-route.duplicate-id', 'Service route IDs must be unique.', []))
   }
   for (const serviceRoute of serviceRoutes) {
     if (serviceRoute.stationIds.length < 2) {
-      issues.push(issue('network.short-service-route', `Service route "${serviceRoute.id}" must include at least two stations.`, [serviceRoute.id]))
+      issues.push(issue('service-route.too-short', `Service route "${serviceRoute.id}" must include at least two stations.`, [serviceRoute.id]))
     }
     for (let index = 0; index < serviceRoute.stationIds.length; index += 1) {
       const stationId = serviceRoute.stationIds[index]
@@ -137,16 +66,6 @@ export function validateRailway(
           `Service route "${serviceRoute.id}" references unknown station "${stationId}".`,
           [serviceRoute.id, stationId],
         ))
-      }
-      if (index > 0) {
-        const previousStationId = serviceRoute.stationIds[index - 1]
-        if (!connectedPairs.has([previousStationId, stationId].sort().join('\u0000'))) {
-          issues.push(issue(
-            'network.disconnected-service-route',
-            `Service route "${serviceRoute.id}" contains consecutive stations without a track connection.`,
-            [serviceRoute.id, previousStationId, stationId],
-          ))
-        }
       }
     }
   }
@@ -189,20 +108,6 @@ export function validateRailway(
     if (!train.route.some((point) => point.stationId === train.destinationStationId)) {
       issues.push(issue('train.destination-not-in-route', `Train "${train.id}" route does not include its destination.`, [train.id]))
     }
-    if (declaredNetwork) {
-      for (let index = 1; index < train.route.length; index += 1) {
-        const fromStationId = train.route[index - 1].stationId
-        const toStationId = train.route[index].stationId
-        if (!hasNetworkPath(fromStationId, toStationId, adjacency)) {
-          issues.push(issue(
-            'train.disconnected-route',
-            `Train "${train.id}" travels between stations without a track connection.`,
-            [train.id, fromStationId, toStationId],
-          ))
-        }
-      }
-    }
-
     let previousTime: number | null = null
     for (const point of train.route) {
       if (!stationIds.has(point.stationId)) {
@@ -304,7 +209,6 @@ export function validateRailway(
   }
 
   validateTrackConflicts(data.trains, issues)
-  validateSingleTrackConflicts(data, options.singleTrackLineIds ?? [], issues)
   validateCarCounts(data, options.expectedCarCounts ?? {}, issues)
   validateTeleportation(data, issues)
 
@@ -347,61 +251,6 @@ function validateTrackConflicts(trains: Train[], issues: ValidationIssue[]) {
             'track.conflict',
             `Trains "${first.trainId}" and "${second.trainId}" occupy track "${first.trackNumber}" at station "${stationId}" at the same time.`,
             [first.trainId, second.trainId, stationId],
-          ))
-        }
-      }
-    }
-  }
-}
-
-function validateSingleTrackConflicts(
-  data: VirtualRailwayData,
-  singleTrackLineIds: string[],
-  issues: ValidationIssue[],
-) {
-  const lines = (data.lines ?? []).filter((line) => singleTrackLineIds.includes(line.id))
-  const singleTrackPairs = new Set((data.trackConnections ?? [])
-    .filter((connection) => connection.trackCount === 1)
-    .map((connection) => JSON.stringify([connection.fromStationId, connection.toStationId].sort())))
-  const segments = new Map<string, Array<{
-    trainId: string
-    start: number
-    end: number
-  }>>()
-
-  for (const train of data.trains) {
-    for (let routeIndex = 0; routeIndex < train.route.length - 1; routeIndex += 1) {
-      const from = train.route[routeIndex]
-      const to = train.route[routeIndex + 1]
-      const departure = safeSeconds(from.departureTime)
-      const arrival = safeSeconds(to.arrivalTime)
-      if (departure === null || arrival === null || arrival < departure) continue
-
-      const segmentId = JSON.stringify([from.stationId, to.stationId].sort())
-      const isConfiguredSegment = singleTrackPairs.has(segmentId) || lines.some((line) => {
-        const fromIndex = line.stations.indexOf(from.stationId)
-        const toIndex = line.stations.indexOf(to.stationId)
-        return fromIndex >= 0 && toIndex >= 0 && Math.abs(fromIndex - toIndex) === 1
-      })
-      if (!isConfiguredSegment) continue
-
-      const segmentEntries = segments.get(segmentId) ?? []
-      segmentEntries.push({ trainId: train.id, start: departure, end: arrival })
-      segments.set(segmentId, segmentEntries)
-    }
-  }
-
-  for (const [segmentId, entries] of segments) {
-    for (let firstIndex = 0; firstIndex < entries.length; firstIndex += 1) {
-      for (let secondIndex = firstIndex + 1; secondIndex < entries.length; secondIndex += 1) {
-        const first = entries[firstIndex]
-        const second = entries[secondIndex]
-        if (first.trainId !== second.trainId && hasOverlappingIntervals(first, second)) {
-          const [stationA, stationB] = JSON.parse(segmentId) as [string, string]
-          issues.push(issue(
-            'single-track.conflict',
-            `Trains "${first.trainId}" and "${second.trainId}" overlap on single-track section "${stationA}"–"${stationB}".`,
-            [first.trainId, second.trainId, stationA, stationB],
           ))
         }
       }

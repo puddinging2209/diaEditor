@@ -55,9 +55,9 @@ test('converts an XML DOM into the railway JSON model', () => {
   const data = parseOud2('<Railway />', new MockDOMParser())
 
   assert.equal(data.railwayName, 'Mock Railway')
-  assert.deepEqual(data.lines, [{ id: 'main', name: 'Main', stations: ['alpha', 'beta'] }])
-  assert.deepEqual(data.trackConnections.map(({ fromStationId, toStationId }) => [fromStationId, toStationId]), [['alpha', 'beta']])
   assert.deepEqual(data.serviceRoutes, [{ id: 'system-main', name: 'Main', stationIds: ['alpha', 'beta'] }])
+  assert.equal('lines' in data, false)
+  assert.equal('trackConnections' in data, false)
   assert.deepEqual(data.stations.map(({ id, name }) => [id, name]), [
     ['alpha', 'Alpha'],
     ['beta', 'Beta'],
@@ -89,7 +89,7 @@ test('imports XML route points with stopType 2 as passing stations', () => {
   assert.equal(data.trains[0].route[1].isPassing, true)
 })
 
-test('imports explicit station connections and named service routes from XML', () => {
+test('imports named service routes without retaining station connections from XML', () => {
   class ExplicitNetworkParser extends MockDOMParser {
     parseFromString(...args) {
       const document = super.parseFromString(...args)
@@ -111,12 +111,7 @@ test('imports explicit station connections and named service routes from XML', (
   }
 
   const data = parseOud2('<Railway />', new ExplicitNetworkParser())
-  assert.deepEqual(data.trackConnections, [{
-    id: 'alpha-beta',
-    fromStationId: 'alpha',
-    toStationId: 'beta',
-    trackCount: 1,
-  }])
+  assert.equal('trackConnections' in data, false)
   assert.deepEqual(data.serviceRoutes, [{
     id: 'airport',
     name: 'Airport Line',
@@ -145,6 +140,8 @@ Ekimei=Gamma
 .
 Ressyasyubetsu.
 Syubetsumei=快速
+JikokuhyouMojiColor=0000FF00
+DiagramSenColor=00FF0000
 .
 Dia.
 DiaName=Weekday
@@ -168,13 +165,11 @@ EkiJikoku=1;800$1,1;810/811$1,1;820$1
   assert.equal(data.trains[0].trainNumber, '101M')
   assert.equal(data.trains[0].type, 'Express')
   assert.equal(data.trains[0].typeName, '快速')
+  assert.deepEqual(data.trainTypeColors, { 快速: '#0000FF' })
+  assert.deepEqual(data.trainTypeTextColors, { 快速: '#00FF00' })
   assert.equal(data.trains[0].trainName, 'Express Name')
   assert.equal(data.trains[0].carCount, 8)
   assert.deepEqual(data.trainTypes, ['快速'])
-  assert.deepEqual(data.trackConnections.map(({ fromStationId, toStationId }) => [fromStationId, toStationId]), [
-    [data.stations[0].id, data.stations[1].id],
-    [data.stations[1].id, data.stations[2].id],
-  ])
   assert.deepEqual(data.serviceRoutes[0].stationIds, data.stations.map(({ id }) => id))
   assert.deepEqual(data.trains[0].route.map(({ arrivalTime, departureTime }) => [arrivalTime, departureTime]), [
     [null, '08:00:00'],
@@ -279,17 +274,7 @@ EkiJikoku=1;800,1;810,1;820,1;830
   const data = parseOud2(text)
   const [alpha, beta, gamma] = data.stations
   assert.equal(data.stations.length, 3)
-  assert.deepEqual(data.lines[0].stations, [alpha.id, beta.id, gamma.id, alpha.id])
-  assert.deepEqual(
-    new Set(data.trackConnections.map(({ fromStationId, toStationId }) =>
-      [fromStationId, toStationId].sort().join(':'),
-    )),
-    new Set([
-      [alpha.id, beta.id].sort().join(':'),
-      [beta.id, gamma.id].sort().join(':'),
-      [gamma.id, alpha.id].sort().join(':'),
-    ]),
-  )
+  assert.deepEqual(data.serviceRoutes[0].stationIds, [alpha.id, beta.id, gamma.id, alpha.id])
   assert.deepEqual(data.trains[0].route.map(({ stationId }) => stationId), [alpha.id, beta.id, gamma.id, alpha.id])
   assert.equal(data.trains[0].originStationId, data.trains[0].destinationStationId)
 })
@@ -332,26 +317,10 @@ EkiJikoku=1;800,1;810,1;820,1;830,1;840,1;850,1;900
   const data = parseOud2(text)
   const [alpha, bravo, charlie, delta, echo, foxtrot] = data.stations
   assert.equal(data.stations.length, 6)
-  assert.deepEqual(data.lines.map(({ stations: stationIds }) => stationIds), [
-    [alpha.id, bravo.id, charlie.id, delta.id],
-    [bravo.id, echo.id, foxtrot.id],
-  ])
   assert.deepEqual(data.serviceRoutes.map(({ stationIds }) => stationIds), [
     [alpha.id, bravo.id, charlie.id, delta.id],
     [bravo.id, echo.id, foxtrot.id],
   ])
-  assert.deepEqual(
-    new Set(data.trackConnections.map(({ fromStationId, toStationId }) =>
-      [fromStationId, toStationId].sort().join(':'),
-    )),
-    new Set([
-      [alpha.id, bravo.id].sort().join(':'),
-      [bravo.id, charlie.id].sort().join(':'),
-      [charlie.id, delta.id].sort().join(':'),
-      [bravo.id, echo.id].sort().join(':'),
-      [echo.id, foxtrot.id].sort().join(':'),
-    ]),
-  )
   assert.deepEqual(
     data.trains[0].route.map(({ stationId }) => stationId),
     [alpha.id, bravo.id, charlie.id, delta.id, bravo.id, echo.id, foxtrot.id],

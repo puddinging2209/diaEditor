@@ -1,4 +1,4 @@
-import { validateVirtualRailwayShape } from './io.ts'
+import { normalizeVirtualRailwayData, validateVirtualRailwayShape } from './io.ts'
 import type { VirtualRailwayData } from './types.ts'
 
 interface StoredRailwayData {
@@ -68,11 +68,21 @@ export class IndexedDbRailwayStore {
     if (issues.length) {
       throw new Error(`Stored railway data is invalid: ${issues.map((item) => item.message).join(' ')}`)
     }
-    return stored.data as VirtualRailwayData
+    const data = stored.data as VirtualRailwayData
+    const normalized = normalizeVirtualRailwayData(data)
+    if (
+      'lines' in data ||
+      'trackConnections' in data ||
+      data.stations.some((station) => 'networkPosition' in station)
+    ) {
+      await this.save(normalized)
+    }
+    return normalized
   }
 
   async save(data: VirtualRailwayData): Promise<void> {
-    const issues = validateVirtualRailwayShape(data)
+    const normalized = normalizeVirtualRailwayData(data)
+    const issues = validateVirtualRailwayShape(normalized)
     if (issues.length) {
       throw new Error(`Railway data is invalid: ${issues.map((item) => item.message).join(' ')}`)
     }
@@ -80,7 +90,7 @@ export class IndexedDbRailwayStore {
     const database = await this.database
     const transaction = database.transaction('railway-data', 'readwrite')
     const completed = transactionComplete(transaction)
-    const request = transaction.objectStore('railway-data').put({ key: 'current', data } satisfies StoredRailwayData)
+    const request = transaction.objectStore('railway-data').put({ key: 'current', data: normalized } satisfies StoredRailwayData)
     await Promise.all([requestResult(request), completed])
   }
 

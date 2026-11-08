@@ -6,23 +6,6 @@ export interface Station {
   canTurnBack: boolean
   isDepot: boolean
   depotCapacity: number | null
-  networkPosition?: {
-    x: number
-    y: number
-  }
-}
-
-export interface Line {
-  id: string
-  name: string
-  stations: string[]
-}
-
-export interface TrackConnection {
-  id: string
-  fromStationId: string
-  toStationId: string
-  trackCount: 1 | 2
 }
 
 export interface ServiceRoute {
@@ -73,12 +56,12 @@ export interface Operation {
 export interface VirtualRailwayData {
   version: '1.0.0'
   railwayName: string
-  lines?: Line[]
   stations: Station[]
   trains: Train[]
   operations: Operation[]
   trainTypes?: string[]
-  trackConnections?: TrackConnection[]
+  trainTypeColors?: Record<string, string>
+  trainTypeTextColors?: Record<string, string>
   serviceRoutes?: ServiceRoute[]
 }
 

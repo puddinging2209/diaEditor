@@ -1,4 +1,4 @@
-import { secondsToTime, timeToSeconds } from './time.ts'
+import { secondsToTime, serviceDaySeconds } from './time.ts'
 import type { Train, TrainType } from './types.ts'
 
 export interface TrainNumberRule {
@@ -28,8 +28,8 @@ export function generatePatternTrains(
     throw new Error('intervalMinutes must be a positive integer.')
   }
 
-  const startSeconds = timeToSeconds(options.startTime)
-  const endSeconds = timeToSeconds(options.endTime)
+  const startSeconds = serviceDaySeconds(options.startTime)
+  const endSeconds = serviceDaySeconds(options.endTime, options.startTime)
   if (endSeconds < startSeconds) {
     throw new Error('endTime must be at or after startTime.')
   }
@@ -43,7 +43,7 @@ export function generatePatternTrains(
     templateTrains
       .flatMap((train) => train.route.map((point) => point.departureTime))
       .filter((time): time is string => time !== null)
-      .sort((left, right) => timeToSeconds(left) - timeToSeconds(right))[0]
+      .sort((left, right) => serviceDaySeconds(left) - serviceDaySeconds(right))[0]
   if (!templateBaseTime) {
     throw new Error('Template trains must contain at least one departure time.')
   }
@@ -107,7 +107,7 @@ export function generatePatternTrains(
       }
       generatedTrainNumbers.add(trainNumber)
 
-      const offsetSeconds = cycleStart - timeToSeconds(templateBaseTime)
+      const offsetSeconds = cycleStart - serviceDaySeconds(templateBaseTime)
       generated.push({
         ...template,
         id,
@@ -117,10 +117,10 @@ export function generatePatternTrains(
           ...point,
           arrivalTime: point.arrivalTime === null
             ? null
-            : secondsToTime(timeToSeconds(point.arrivalTime) + offsetSeconds),
+            : secondsToTime(serviceDaySeconds(point.arrivalTime, templateBaseTime) + offsetSeconds),
           departureTime: point.departureTime === null
             ? null
-            : secondsToTime(timeToSeconds(point.departureTime) + offsetSeconds),
+            : secondsToTime(serviceDaySeconds(point.departureTime, templateBaseTime) + offsetSeconds),
           operationEvent: point.operationEvent === null
             ? null
             : {

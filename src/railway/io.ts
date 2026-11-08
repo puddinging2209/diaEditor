@@ -94,18 +94,6 @@ function validateStation(value: unknown, path: string, issues: ValidationIssue[]
       (typeof value.depotCapacity !== 'number' || !Number.isFinite(value.depotCapacity) || value.depotCapacity < 0)) {
     addIssue(issues, `${path}.depotCapacity`, 'must be a non-negative number or null.')
   }
-  if (value.networkPosition !== undefined) {
-    if (!isRecord(value.networkPosition)) {
-      addIssue(issues, `${path}.networkPosition`, 'must be an object.')
-    } else {
-      checkKeys(value.networkPosition, ['x', 'y'], `${path}.networkPosition`, issues)
-      for (const key of ['x', 'y']) {
-        if (typeof value.networkPosition[key] !== 'number' || !Number.isFinite(value.networkPosition[key])) {
-          addIssue(issues, `${path}.networkPosition.${key}`, 'must be a finite number.')
-        }
-      }
-    }
-  }
 }
 
 function validateLine(value: unknown, path: string, issues: ValidationIssue[]) {
@@ -221,20 +209,6 @@ function validateOperation(value: unknown, path: string, issues: ValidationIssue
   checkStringArray(value.trainIds, `${path}.trainIds`, issues)
 }
 
-function validateTrackConnection(value: unknown, path: string, issues: ValidationIssue[]) {
-  if (!isRecord(value)) {
-    addIssue(issues, path, 'must be an object.')
-    return
-  }
-  checkKeys(value, ['id', 'fromStationId', 'toStationId', 'trackCount'], path, issues)
-  for (const key of ['id', 'fromStationId', 'toStationId']) {
-    checkString(value[key], `${path}.${key}`, issues)
-  }
-  if (value.trackCount !== 1 && value.trackCount !== 2) {
-    addIssue(issues, `${path}.trackCount`, 'must be 1 or 2.')
-  }
-}
-
 function validateServiceRoute(value: unknown, path: string, issues: ValidationIssue[]) {
   if (!isRecord(value)) {
     addIssue(issues, path, 'must be an object.')
@@ -257,7 +231,7 @@ export function validateVirtualRailwayShape(value: unknown): ValidationIssue[] {
     ['version', 'railwayName', 'stations', 'trains', 'operations'],
     '$',
     issues,
-    ['lines', 'trainTypes', 'trackConnections', 'serviceRoutes'],
+    ['lines', 'trainTypes', 'trainTypeColors', 'trainTypeTextColors', 'trackConnections', 'serviceRoutes'],
   )
   if (value.version !== '1.0.0') addIssue(issues, '$.version', 'must be "1.0.0".')
   checkString(value.railwayName, '$.railwayName', issues)
@@ -266,16 +240,33 @@ export function validateVirtualRailwayShape(value: unknown): ValidationIssue[] {
     if (Array.isArray(value.trainTypes) && value.trainTypes.some((name) => typeof name !== 'string' || !name.trim())) {
       addIssue(issues, '$.trainTypes', 'must contain non-empty names.')
     }
+    for (const key of ['trainTypeColors', 'trainTypeTextColors']) {
+      if (!(key in value)) continue
+      if (!isRecord(value[key])) {
+        addIssue(issues, `$.${key}`, 'must be an object mapping train type names to hex colors.')
+        continue
+      }
+      for (const [typeName, color] of Object.entries(value[key])) {
+        if (!typeName.trim() || typeof color !== 'string' || !/^#[\da-fA-F]{6}$/.test(color)) {
+          addIssue(issues, `$.${key}.${typeName}`, 'must be a train type name and a #RRGGBB color.')
+        }
+      }
+    }
   }
-  for (const key of ['lines', 'stations', 'trains', 'operations']) {
-    if (key === 'lines' && !(key in value)) continue
+  if ('lines' in value) {
+    if (!Array.isArray(value.lines)) {
+      addIssue(issues, '$.lines', 'must be an array.')
+    } else {
+      value.lines.forEach((entity, index) => validateLine(entity, `$.lines[${index}]`, issues))
+    }
+  }
+  for (const key of ['stations', 'trains', 'operations']) {
     if (!Array.isArray(value[key])) {
       addIssue(issues, `$.${key}`, 'must be an array.')
       continue
     }
     value[key].forEach((entity, index) => {
       const path = `$.${key}[${index}]`
-      if (key === 'lines') validateLine(entity, path, issues)
       if (key === 'stations') validateStation(entity, path, issues)
       if (key === 'trains') validateTrain(entity, path, issues)
       if (key === 'operations') validateOperation(entity, path, issues)
@@ -285,7 +276,6 @@ export function validateVirtualRailwayShape(value: unknown): ValidationIssue[] {
     key: string
     validate: (entity: unknown, path: string, validationIssues: ValidationIssue[]) => void
   }> = [
-    { key: 'trackConnections', validate: validateTrackConnection },
     { key: 'serviceRoutes', validate: validateServiceRoute },
   ]
   for (const { key, validate } of optionalEntityValidators) {
@@ -299,12 +289,36 @@ export function validateVirtualRailwayShape(value: unknown): ValidationIssue[] {
   return issues
 }
 
+export function normalizeVirtualRailwayData(data: VirtualRailwayData): VirtualRailwayData {
+  const legacyData = data as VirtualRailwayData & {
+    lines?: Array<{ id: string; name: string; stations: string[] }>
+    trackConnections?: unknown
+  }
+  const normalized = Object.fromEntries(
+    Object.entries(data).filter(([key]) => key !== 'lines' && key !== 'trackConnections'),
+  ) as VirtualRailwayData
+  normalized.stations = data.stations.map((station) => {
+    const normalizedStation = { ...station } as typeof station & { networkPosition?: unknown }
+    delete normalizedStation.networkPosition
+    return normalizedStation
+  })
+  if (!data.serviceRoutes && legacyData.lines) {
+    normalized.serviceRoutes = legacyData.lines.map((line) => ({
+      id: `system-${line.id}`,
+      name: line.name,
+      stationIds: [...line.stations],
+    }))
+  }
+  return normalized
+}
+
 export function exportRailwayJson(data: VirtualRailwayData): string {
   const issues = validateVirtualRailwayShape(data)
   if (issues.length) {
     throw new RailwayDataFormatError('Railway data does not match the 1.0.0 schema.', issues)
   }
-  return JSON.stringify(data, null, 2)
+  const normalized = normalizeVirtualRailwayData(data)
+  return JSON.stringify(normalized, null, 2)
 }
 
 export function importRailwayJson(json: string): VirtualRailwayData {
@@ -319,5 +333,5 @@ export function importRailwayJson(json: string): VirtualRailwayData {
   if (issues.length) {
     throw new RailwayDataFormatError('Imported data does not match the 1.0.0 schema.', issues)
   }
-  return value as VirtualRailwayData
+  return normalizeVirtualRailwayData(value as VirtualRailwayData)
 }

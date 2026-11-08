@@ -1,4 +1,6 @@
 const TIME_PATTERN = /^(\d{2}):([0-5]\d):([0-5]\d)$/
+export const SERVICE_DAY_START_SECONDS = 3 * 60 * 60
+const SECONDS_PER_DAY = 24 * 60 * 60
 
 export function digitsToTime(digits: string): string {
   if (!/^\d{6}$/.test(digits)) {
@@ -22,6 +24,19 @@ export function timeToSeconds(time: string): number {
 
   const [, hours, minutes, seconds] = match
   return Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds)
+}
+
+export function serviceDaySeconds(time: string, referenceTime?: string): number {
+  const seconds = timeToSeconds(time)
+  let serviceSeconds = seconds < SERVICE_DAY_START_SECONDS ? seconds + SECONDS_PER_DAY : seconds
+  if (referenceTime !== undefined) {
+    const referenceSeconds = timeToSeconds(referenceTime)
+    const serviceReferenceSeconds = referenceSeconds < SERVICE_DAY_START_SECONDS
+      ? referenceSeconds + SECONDS_PER_DAY
+      : referenceSeconds
+    while (serviceSeconds < serviceReferenceSeconds) serviceSeconds += SECONDS_PER_DAY
+  }
+  return serviceSeconds
 }
 
 export function secondsToTime(totalSeconds: number): string {

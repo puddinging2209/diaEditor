@@ -1,14 +1,13 @@
-import { deriveNetworkFromLines, deriveTrackConnections } from './network.ts'
-import type { Line, ServiceRoute, Station, Train, TrainRoutePoint, TrainType, VirtualRailwayData } from './types.ts'
+import type { ServiceRoute, Station, Train, TrainRoutePoint, TrainType, VirtualRailwayData } from './types.ts'
 
 const STATION_TAGS = new Set(['station', 'stationinfo', 'sta', '駅'])
 const LINE_TAGS = new Set(['line', 'railwayline', '路線'])
-const TRACK_CONNECTION_TAGS = new Set(['trackconnection', 'stationconnection', '駅間接続'])
 const TRAIN_TAGS = new Set(['train', 'diatrain', 'traininfo', '列車'])
 const STOP_TAGS = new Set(['stop', 'stoppoint', 'routepoint', 'stationtime', 'trainstation', 'station', '駅時刻', '停車駅'])
 const PARSER_ERROR_TAGS = new Set(['parsererror'])
 
 type XmlElement = Element
+type ParsedLine = { id: string; name: string; stations: string[] }
 
 interface OudSection {
   name: string
@@ -67,6 +66,15 @@ function getProperty(section: OudSection, ...names: string[]): string | null {
     if (value !== undefined && value !== '') return value
   }
   return null
+}
+
+function parseOuDiaColor(value: string | null): string | undefined {
+  if (!value || !/^(?:[\da-fA-F]{6}|[\da-fA-F]{8})$/.test(value)) return undefined
+  const offset = value.length === 8 ? 2 : 0
+  const red = value.slice(offset + 4, offset + 6)
+  const green = value.slice(offset + 2, offset + 4)
+  const blue = value.slice(offset, offset + 2)
+  return `#${red}${green}${blue}`.toUpperCase()
 }
 
 function parseCompactOudTime(value: string): string | null {
@@ -218,7 +226,7 @@ function parseOuDiaText(text: string): VirtualRailwayData {
   if (stationEntries.length < 2) throw new Error('The OuDia file must contain at least two Eki stations.')
 
   const lineName = getProperty(railwaySection, 'Rosenmei') ?? 'Imported Railway'
-  const lines: Line[] = splitStationEntriesAtBranchJunctions(stationEntries).map((path, index) => {
+  const lines: ParsedLine[] = splitStationEntriesAtBranchJunctions(stationEntries).map((path, index) => {
     const name = index === 0 ? lineName : `${lineName} (${index + 1})`
     return {
       id: makeId(index === 0 ? lineName : `${lineName}-branch-${index + 1}`, 'line'),
@@ -226,11 +234,24 @@ function parseOuDiaText(text: string): VirtualRailwayData {
       stations: path.map((station) => station.id),
     }
   })
-  const { trackConnections, serviceRoutes } = deriveNetworkFromLines(lines)
-  const sourceTrainTypes = railwaySection.children
-    .filter((section) => section.name === 'Ressyasyubetsu')
-    .map((section) => getProperty(section, 'Syubetsumei') ?? '')
+  const serviceRoutes: ServiceRoute[] = lines.map((line) => ({
+    id: `system-${line.id}`,
+    name: line.name,
+    stationIds: [...line.stations],
+  }))
+  const sourceTrainTypeSections = railwaySection.children.filter((section) => section.name === 'Ressyasyubetsu')
+  const sourceTrainTypes = sourceTrainTypeSections.map((section) => getProperty(section, 'Syubetsumei') ?? '')
   const trainTypes = [...new Set(sourceTrainTypes.filter(Boolean))]
+  const trainTypeColors: Record<string, string> = {}
+  const trainTypeTextColors: Record<string, string> = {}
+  for (const section of sourceTrainTypeSections) {
+    const name = getProperty(section, 'Syubetsumei')
+    if (!name) continue
+    const diagramColor = parseOuDiaColor(getProperty(section, 'DiagramSenColor'))
+    const textColor = parseOuDiaColor(getProperty(section, 'JikokuhyouMojiColor'))
+    if (diagramColor) trainTypeColors[name] = diagramColor
+    if (textColor) trainTypeTextColors[name] = textColor
+  }
   const diagramSections = railwaySection.children.filter((section) => section.name === 'Dia')
   const trains: Train[] = []
 
@@ -270,12 +291,12 @@ function parseOuDiaText(text: string): VirtualRailwayData {
   return {
     version: '1.0.0',
     railwayName: lineName,
-    lines,
     stations,
     trains,
     operations: [],
     trainTypes,
-    trackConnections,
+    trainTypeColors,
+    trainTypeTextColors,
     serviceRoutes,
   }
 }
@@ -535,7 +556,7 @@ export function parseOud2(xml: string, parser?: DOMParser): VirtualRailwayData {
     }
   })
 
-  const lines: Line[] = elementsWithin(document)
+  const lines: ParsedLine[] = elementsWithin(document)
     .filter((element) => matchesName(element, LINE_TAGS))
     .map((element, index) => {
       const name = readValue(element, ['name', 'lineName', '路線名']) ?? `Line ${index + 1}`
@@ -568,35 +589,13 @@ export function parseOud2(xml: string, parser?: DOMParser): VirtualRailwayData {
         stationIds: references.map((reference) => stationIdsByName.get(reference) ?? reference),
       }
     })
-  const legacyNetwork = deriveNetworkFromLines(lines)
-  const routeConnections = deriveTrackConnections(trains.map(({ id, route }) => ({
-    id,
-    stationIds: route.map(({ stationId }) => stationId),
-  })))
-  const explicitConnections = elementsWithin(document)
-    .filter((element) => matchesName(element, TRACK_CONNECTION_TAGS))
-    .flatMap((element, index) => {
-      const fromRef = readValue(element, ['fromStationId', 'from', '起点駅ID'])
-      const toRef = readValue(element, ['toStationId', 'to', '終点駅ID'])
-      if (!fromRef || !toRef) return []
-      const fromStationId = stationIdsByName.get(fromRef) ?? fromRef
-      const toStationId = stationIdsByName.get(toRef) ?? toRef
-      const trackCount = readNumber(readValue(element, ['trackCount', 'tracks', '線路数']))
-      return [{
-        id: readValue(element, ['id', 'connectionId', '接続ID']) ?? `connection-${index + 1}`,
-        fromStationId,
-        toStationId,
-        trackCount: trackCount === 1 ? 1 as const : 2 as const,
-      }]
-    })
-  const trackConnections = explicitConnections.length
-    ? explicitConnections
-    : lines.length
-      ? legacyNetwork.trackConnections
-      : routeConnections
   const serviceRoutes = explicitServiceRoutes.length
     ? explicitServiceRoutes
-    : legacyNetwork.serviceRoutes
+    : lines.map((line) => ({
+        id: `system-${line.id}`,
+        name: line.name,
+        stationIds: [...line.stations],
+      }))
 
   if (!trains.length) {
     throw new Error('No trains were found in the .oud2 document.')
@@ -609,12 +608,10 @@ export function parseOud2(xml: string, parser?: DOMParser): VirtualRailwayData {
   return {
     version: '1.0.0',
     railwayName,
-    lines,
     stations,
     trains,
     operations: [],
     trainTypes: [...new Set(trains.map((train) => train.typeName).filter((name): name is string => Boolean(name)))],
-    trackConnections,
     serviceRoutes,
   }
 }
